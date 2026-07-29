@@ -43,19 +43,23 @@ def main():
     eigenvalues, eigenvectors = np.linalg.eigh(H)
 
     E_0 = eigenvalues[0]
-    c_ground = eigenvectors[:, 0]  # Ground-state coefficients
 
     field_H0 = psi_harmonic(0, x_grid)
 
+
+    plt.figure(figsize=(10, 8))
+
     field_full = np.zeros_like(x_grid)
-    for n in range(N):
-        field_full += c_ground[n] * psi_harmonic(n, x_grid)
+    for k in range(5):
+        c_k = eigenvectors[:, k]  # k-th eigenstate coefficients
+        psi_k = np.zeros_like(x_grid)
+        for n in range(N):
+            psi_k += c_k[n] * psi_harmonic(n, x_grid)
+        E_k = eigenvalues[k]
+        plt.plot(x_grid, psi_k + E_k, label=f"Eigenstate {k} (E={eigenvalues[k]:.2f})")
 
-    # Standardize sign of full field profile for consistent plotting
-    if field_full[250] < 0:
-        field_full = -field_full
-
-    plt.figure(figsize=(9, 5.5))
+    E_min = np.min(eigenvalues)
+    E_max = eigenvalues[4]
 
     # Unperturbed QHO
     plt.plot(
@@ -68,13 +72,6 @@ def main():
     )
 
     # Full Anharmonic Ground State
-    plt.plot(
-        x_grid, 
-        field_full, 
-        label=f"Anharmonic Ground State ($g = {g}$)", 
-        color="teal", 
-        linewidth=2.5
-    )
 
     # Scaled Potential V(x) for reference
     V_visual = 0.5 * x_grid**2 + g * x_grid**4
@@ -88,8 +85,8 @@ def main():
     )
 
     plt.axhline(0, color="gray", linestyle="-", linewidth=0.8, alpha=0.5)
-    plt.ylim(-0.1, 1.2)
-    plt.xlim(-4.0, 4.0)
+    plt.ylim(E_min - 1, E_max + 2)
+    plt.xlim(-10.0, 10.0)
 
     plt.title(f"QHO Anharmonic Ground State via Numerical Integration ($N = {N}$, $E_0 = {E_0:.4f}$)", fontsize=11)
     plt.xlabel("Position (x)", fontsize=11)
