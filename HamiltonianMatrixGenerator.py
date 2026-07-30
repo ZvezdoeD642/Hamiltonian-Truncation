@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import quad
 
-from Hamiltonian_new import psi
+# import the psi function from phi4-Hamiltonian.py
+from SimpleHamiltonian import psi
 
 def main():
     # System Parameters

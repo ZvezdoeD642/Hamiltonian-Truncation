@@ -5,10 +5,6 @@ from scipy.special import hermite
 
 
 def harmonic_oscillator_wavefunction(n, x):
-    """Calculates the spatial wavefunction psi_n(x) for the n-th harmonic oscillator
-
-    basis state: psi_n(x) = (1 / sqrt(2^n n! sqrt(pi))) * H_n(x) * exp(-x^2 / 2)
-    """
     normalization = 1.0 / np.sqrt((2.0**n) * math.factorial(n) * np.sqrt(np.pi))
     # Hermite polynomial H_n(x)
     H_n = hermite(n)
