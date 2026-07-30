@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import itertools
 
-
+# --- 1. GLOBAL SETUPS ---
 possible_combinations = list(itertools.product([-1, 1], repeat=4))
 momenta = [-1, 0, 1]
 mode_indices = [0, 1, 2] 
@@ -13,6 +13,7 @@ for combo in itertools.product(mode_indices, repeat=4):
     if total_momentum == 0:
         valid_mode_combos.append(combo)
 
+# --- 2. CORE FUNCTIONS ---
 def generate_fock_basis(E_max, mass, modes):
     omegas = [np.sqrt(k**2 + mass**2) for k in modes]
     basis = []
@@ -27,7 +28,7 @@ def generate_fock_basis(E_max, mass, modes):
         # 2. Count the total number of particles in this state
         total_particles = sum(state_tuple)
         
-        # 3. THE DOUBLE FILTER: Under budget and Even parity
+        # 3. THE DOUBLE FILTER: Under budget AND Even parity!
         if total_energy <= E_max and total_particles % 2 == 0:
             basis.append(state_tuple)
             
@@ -50,8 +51,7 @@ def annihilation(coeff, state_tuple, mode_index):
     temp_list[mode_index] -= 1
     return new_coeff, tuple(temp_list)
 
-
-
+# --- 3. MAIN SCRIPT ---
 def main():
     # Physics parameters
     E_max = 6.0
@@ -76,7 +76,7 @@ def main():
             start_state = my_basis[j]
             end_state = my_basis[i]
 
-            # Initialize the cell total to 0 at the start of every cell
+            # FIX: Initialize the cell total to 0 at the start of every cell
             cell_total = 0.0
 
             # Diagonal elements (Free Energy H_0)
@@ -99,12 +99,12 @@ def main():
                         if current_coeff == 0.0:
                             break
                         
-                    # Orthogonality check inside op_combo loop
+                    # FIX: Orthogonality check inside op_combo loop
                     if current_state == end_state:
                         # Multiply by coupling constant g!
                         cell_total += g * current_coeff
 
-            # Assign to matrix outside of the nested combos loop
+            # FIX: Assign to matrix outside of the nested combos loop
             H[i, j] = cell_total
 
     print("Diagonalizing Matrix...")
@@ -115,31 +115,31 @@ def main():
     
     print(f"\nSUCCESS! Non-Perturbative Ground State Energy: {E_0:.4f}")
     
-    # --- 4. RECONSTRUCTING PHYSICAL SPACE ---
-    # We are going to calculate the quantum fluctuations <phi(x)^2>
-    # across a physical spatial grid.
+    # --- 4. ANIMATING THE QUANTUM SNAPSHOT ---
+    import matplotlib.animation as animation
     
-    # --- 4. RECONSTRUCTING A PHYSICAL SNAPSHOT ---
     x_grid = np.linspace(0, L, 500)
-    spatial_profile = np.zeros_like(x_grid)
     
-    print("Capturing an instantaneous snapshot of the quantum vacuum...")
+    # We pre-calculate the random amplitudes and frequencies for each mode
+    # so we don't pick new random numbers every single frame!
+    mode_amplitudes = []
+    frequencies = []
+    spatial_waves = []
     
-    # We iterate through all states in your beautifully calculated vacuum
+    print("Setting up the real-time vacuum simulation...")
     for state_index, state_tuple in enumerate(my_basis):
-        
-        # Get the probability of this specific state existing in the vacuum
         probability = np.abs(ground_state_vector[state_index])**2
         
-        # If this state is meaningfully present...
         if probability > 1e-6:
             for mode_idx, num_particles in enumerate(state_tuple):
                 if num_particles > 0:
                     k = momenta[mode_idx]
+                    omega = omegas[mode_idx] # The frequency w = sqrt(k^2 + m^2)
                     
+                    # Draw the initial random fluctuation amplitude
                     fluctuation = np.random.normal(0, np.sqrt(probability * num_particles))
                     
-                    # Grab the raw standing wave
+                    # Grab the physical standing wave
                     if k == 0:
                         wave = np.ones_like(x_grid)
                     elif k > 0:
@@ -147,18 +147,38 @@ def main():
                     else:
                         wave = np.sin((2 * np.pi * abs(k) / L) * x_grid)
                         
-                    # Add the fluctuating wave to the total field snapshot!
-                    spatial_profile += fluctuation * wave
+                    # Save them to our animation lists
+                    mode_amplitudes.append(fluctuation)
+                    frequencies.append(omega)
+                    spatial_waves.append(wave)
 
-    # --- PLOT THE SMOOTH OSCILLATING LINE ---
-    plt.figure(figsize=(8, 5))
-    plt.plot(x_grid, spatial_profile, color='crimson', linewidth=2.0)
-    plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+    # Set up the matplotlib figure
+    fig, ax = plt.subplots(figsize=(8, 5))
+    line, = ax.plot(x_grid, np.zeros_like(x_grid), color='crimson', linewidth=2.0)
+    ax.axhline(0, color='black', linestyle='--', alpha=0.5)
     
-    plt.title("Instantaneous Quantum Vacuum Fluctuation Snapshot $\\phi(x)$", fontsize=14)
-    plt.xlabel("Physical Space (x)", fontsize=12)
-    plt.ylabel("Field Amplitude", fontsize=12)
-    plt.grid(alpha=0.3)
+    # Lock the Y-axis so the graph doesn't violently jump around while animating
+    ax.set_ylim(-2.0, 2.0) 
+    ax.set_title("Real-Time Quantum Vacuum Fluctuations $\\phi(x, t)$", fontsize=14)
+    ax.set_xlabel("Physical Space (x)", fontsize=12)
+    ax.set_ylabel("Field Amplitude", fontsize=12)
+    ax.grid(alpha=0.3)
+
+    # The Animation Function (Runs once per frame)
+    def animate(frame):
+        t = frame * 0.05  # Advance time forward
+        current_profile = np.zeros_like(x_grid)
+        
+        # Evolve each mode forward in time using cos(omega * t)
+        for amp, w, wave in zip(mode_amplitudes, frequencies, spatial_waves):
+            current_profile += amp * wave * np.cos(w * t)
+            
+        line.set_ydata(current_profile)
+        return line,
+
+    # Run the animation!
+    print("Running animation... Close the window to exit.")
+    ani = animation.FuncAnimation(fig, animate, frames=400, interval=40, blit=True)
     plt.tight_layout()
     plt.show()
 
