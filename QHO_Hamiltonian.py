@@ -29,7 +29,7 @@ def main():
                 # Integrate over bounds [-10, 10]
                 V_ij, _ = quad(integrand, -10.0, 10.0)
             else:
-                V_ij = 0.0  # Odd parity terms are exactly 0
+                V_ij = 0.0 
 
             if i == j:
                 # Diagonal: Unperturbed QHO energy E_n = (n + 1/2) + Interaction V_ii
@@ -70,8 +70,6 @@ def main():
         linestyle="--", 
         linewidth=2
     )
-
-    # Full Anharmonic Ground State
 
     # Scaled Potential V(x) for reference
     V_visual = 0.5 * x_grid**2 + g * x_grid**4

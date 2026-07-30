@@ -34,7 +34,7 @@ def main():
 
     eigenvalues, eigenvectors = np.linalg.eigh(H)
 
-    # Ground-state energy and eigenvector coefficients (c_1, c_2, ..., c_N)
+    # Ground-state energy and eigenvector coefficients
     E_0 = eigenvalues[0]
     c_ground = eigenvectors[:, 0]
 
@@ -43,7 +43,7 @@ def main():
     x_grid = np.linspace(0, L, 500)
     field_profile = np.zeros_like(x_grid)
 
-    # Superpose: Psi_0(x) = sum_n ( c_n * psi_n(x) )
+    # Superpose
     for idx, c_n in enumerate(c_ground):
         n = idx + 1
         field_profile += c_n * psi(n, x_grid)

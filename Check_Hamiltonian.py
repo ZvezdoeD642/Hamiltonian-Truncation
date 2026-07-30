@@ -2,9 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import quad, solve_ivp
 
-# ==========================================
-# 1. System Parameters
-# ==========================================
+
 L = 1.0           # Box length x in [0, L]
 N = 25            # Truncation limit (matrix size: N x N)
 g = 20.0           # Coupling constant for V(x) = g * x^4
@@ -15,9 +13,7 @@ def V_potential(x):
 def psi_basis(n, x):
     return np.sqrt(2.0 / L) * np.sin(n * np.pi * x / L)
 
-# ==========================================
-# 2. Method A: Hamiltonian Truncation Matrix
-# ==========================================
+
 H = np.zeros((N, N))
 for i in range(1, N + 1):
     for j in range(1, N + 1):
@@ -40,22 +36,18 @@ y_HT = np.zeros_like(x_grid)
 for idx, c_n in enumerate(c_ground):
     y_HT += c_n * psi_basis(idx + 1, x_grid)
 
-# ==========================================
-# 3. Method B: Direct ODE Integration using E0_HT
-# ==========================================
+
 # Differential Equation: -1/2 y'' + V(x)y = E0 * y  ==>  y'' = 2*(V(x) - E0)*y
 def ode_system(x, Y):
     y, dydx = Y
     d2ydx2 = 2.0 * (V_potential(x) - E0_HT) * y
     return [dydx, d2ydx2]
 
-# Integrate from x=0 to x=L with initial condition y(0)=0
-# We tune initial slope y'(0) to match the HT wave magnitude
+
 initial_slope = c_ground[0] * np.sqrt(2.0 / L) * (np.pi / L) # Match slope at x=0
 sol = solve_ivp(ode_system, [0, L], [0.0, initial_slope], t_eval=x_grid, rtol=1e-8, atol=1e-10)
 y_ODE = sol.y[0]
 
-# Normalize ODE profile so integral |y|^2 dx = 1
 norm_factor = np.sqrt(np.trapezoid(y_ODE**2, x_grid))
 y_ODE = y_ODE / norm_factor
 
@@ -74,9 +66,7 @@ print(f"Mean Absolute Error (MAE) : {mae:.6e}")
 print(f"Root Mean Square Error   : {rmse:.6e}")
 print(f"Maximum Difference       : {max_err:.6e}")
 
-# ==========================================
-# 4. Plot Comparison
-# ==========================================
+
 print(f"Hamiltonian Truncation Ground State Energy E_0 = {E0_HT:.6f}")
 print(f"Endpoint Value of ODE Wave at x=L: y(L) = {y_ODE[-1]:.6e}")
 
