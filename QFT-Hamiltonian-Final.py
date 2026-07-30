@@ -1,11 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import itertools
+from scipy.sparse import lil_matrix
+from scipy.sparse.linalg import eigsh
 
-# =====================================================================
-# 1. GLOBAL SETUPS & PHYSICS PARAMETERS
-# =====================================================================
-E_max = 6.0
+E_max = 15.0
 mass = 1.0
 g = 0.5       # Interaction coupling strength
 L = 10.0      # Box size
@@ -23,23 +22,44 @@ for combo in itertools.product(mode_indices, repeat=4):
 op_4_combos = list(itertools.product([-1, 1], repeat=4)) # For phi^4
 op_2_combos = list(itertools.product([-1, 1], repeat=2)) # For phi^2
 
-# =====================================================================
-# 2. CORE ENGINE FUNCTIONS
-# =====================================================================
-def generate_fock_basis(E_max, mass, modes):
+
+def generate_fock_basis_recursive(E_max, mass, modes):
+    """
+    Generates a truncated Fock space basis using Depth-First Search.
+    Strictly enforces the energy cutoff (E_max) and Z2 symmetry (Even Parity).
+    """
     omegas = [np.sqrt(k**2 + mass**2) for k in modes]
+    num_modes = len(modes)
     basis = []
-    max_particles = int(E_max / min(omegas)) + 1
     
-    # Generate all tuples and apply the TRUNCATION & SYMMETRY filters
-    for state_tuple in itertools.product(range(max_particles), repeat=len(modes)):
-        total_energy = sum(state_tuple[i] * omegas[i] for i in range(len(modes)))
-        total_particles = sum(state_tuple)
+    # We maintain a single list that represents our current path down the tree
+    current_state = [0] * num_modes
+    
+    def dfs(mode_idx, current_energy, current_particles):
+        # BASE CASE: We have assigned a particle count to every mode
+        if mode_idx == num_modes:
+            # Apply the Z2 Symmetry filter (Even Parity)
+            if current_particles % 2 == 0:
+                basis.append(tuple(current_state))
+            return
         
-        # Keep only states under budget AND with Even Parity (Z2 Symmetry)
-        if total_energy <= E_max and total_particles % 2 == 0:
-            basis.append(state_tuple)
+        # RECURSIVE STEP: How many particles can we afford in this specific mode?
+        omega = omegas[mode_idx]
+        budget_remaining = E_max - current_energy
+        max_particles_for_this_mode = int(budget_remaining / omega)
+        
+        # Loop through all affordable particle counts for this mode
+        for n in range(max_particles_for_this_mode + 1):
+            current_state[mode_idx] = n
+            new_energy = current_energy + n * omega
+            new_particles = current_particles + n
             
+            # Recurse deeper into the next mode
+            dfs(mode_idx + 1, new_energy, new_particles)
+
+    # Kick off the recursion starting at mode 0, with 0 energy and 0 particles
+    dfs(mode_idx=0, current_energy=0.0, current_particles=0)
+    
     return basis, omegas
 
 def creation(coeff, state_tuple, mode_index):
@@ -57,52 +77,67 @@ def annihilation(coeff, state_tuple, mode_index):
     temp_list[mode_index] -= 1
     return new_coeff, tuple(temp_list)
 
-# =====================================================================
-# 3. MAIN SCRIPT: DIAGONALIZATION & OBSERVABLES
-# =====================================================================
+
 def main():
     print(f"--- QFT Hamiltonian Truncation (E_max = {E_max}) ---")
     
     # 1. Generate Basis
-    my_basis, omegas = generate_fock_basis(E_max, mass, momenta)
+    my_basis, omegas = generate_fock_basis_recursive(E_max, mass, momenta)
     N = len(my_basis) 
     print(f"Basis generated. Matrix Dimension: {N} x {N}")
 
-    # 2. Build Hamiltonian Matrix
-    H = np.zeros((N, N))
-    print("Building Hamiltonian Matrix...")
-    for i in range(N):
-        for j in range(N):
-            start_state = my_basis[j]
-            end_state = my_basis[i]
-            cell_total = 0.0
+    # 1. The Reverse Lookup Dictionary (O(1) lookups instead of O(N) searches)
+    print("Building reverse lookup dictionary...")
+    state_to_idx = {state: idx for idx, state in enumerate(my_basis)}
 
-            # Diagonal (Free Energy)
-            if i == j:
-                cell_total += sum(start_state[k] * omegas[k] for k in range(3))
+    # 2. Initialize a Sparse LIL Matrix (List of Lists, optimized for adding elements)
+    print("Building Sparse Hamiltonian Matrix...")
+    H = lil_matrix((N, N))
 
-            # Off-Diagonal (phi^4 Interaction)
-            for mode_combo in valid_mode_combos:
-                for op_combo in op_4_combos:
-                    current_state = start_state
-                    current_coeff = 1.0
+    # We only loop through the starting states ONCE (O(N) instead of O(N^2))
+    for j, start_state in enumerate(my_basis):
+        
+        # --- Diagonal Elements (Free Energy) ---
+        free_energy = sum(start_state[k] * omegas[k] for k in range(len(momenta)))
+        H[j, j] = free_energy
+
+        # --- Off-Diagonal Elements (Interactions) ---
+        for mode_combo in valid_mode_combos:
+            for op_combo in op_4_combos:
+                
+                current_state = start_state
+                current_coeff = 1.0
+                
+                # Apply the 4 operators sequentially
+                for op, idx in zip(reversed(op_combo), reversed(mode_combo)):
+                    if op == -1: 
+                        current_coeff, current_state = annihilation(current_coeff, current_state, idx)
+                    elif op == 1: 
+                        current_coeff, current_state = creation(current_coeff, current_state, idx)
                     
-                    for op, idx in zip(reversed(op_combo), reversed(mode_combo)):
-                        if op == -1: current_coeff, current_state = annihilation(current_coeff, current_state, idx)
-                        elif op == 1: current_coeff, current_state = creation(current_coeff, current_state, idx)
-                        if current_coeff == 0.0: break
-                        
-                    if current_state == end_state:
-                        cell_total += g * current_coeff
+                    # If an annihilation hit 0, this interaction chain is dead
+                    if current_coeff == 0.0: 
+                        break
+                
+                # If the chain survived AND the resulting state is within our E_max budget...
+                if current_coeff != 0.0 and current_state in state_to_idx:
+                    # Look up the row index of the resulting state instantly
+                    i = state_to_idx[current_state]
+                    
+                    # Add to the sparse matrix
+                    H[i, j] += g * current_coeff
 
-            H[i, j] = cell_total
+    # 3. Convert to CSR (Compressed Sparse Row) format for ultra-fast math
+    H = H.tocsr()
+    print(f"Matrix built! Non-zero elements: {H.nnz} (out of {N*N} total cells)")
 
     # 3. Diagonalize
-    print("Diagonalizing...")
-    eigenvalues, eigenvectors = np.linalg.eigh(H)
+    print("Diagonalizing Matrix using Lanczos algorithm...")
+    
+    eigenvalues, eigenvectors = eigsh(H, k=1, which='SA')
+    
     E_0 = eigenvalues[0]
     ground_state = eigenvectors[:, 0]
-    print(f"Ground State Energy (Vacuum): {E_0:.4f}")
 
     # 4. Simple Observable: Total Virtual Particles
     N_matrix = np.zeros((N, N))
@@ -111,9 +146,7 @@ def main():
     expected_particles = ground_state.T @ N_matrix @ ground_state
     print(f"Expected Virtual Particles in Vacuum: {expected_particles:.4f}")
 
-    # =====================================================================
-    # 4. THE 2-POINT SPATIAL CORRELATION FUNCTION <phi(x)phi(0)>
-    # =====================================================================
+
     print("Calculating Exact 2-Point Correlation Function...")
     
     # Step A: Precompute the operator matrix for every pair of modes (m, n)
@@ -168,9 +201,7 @@ def main():
                 
         correlation_values.append(c_val)
 
-    # =====================================================================
-    # 5. PLOTTING THE PUBLISHABLE DATA
-    # =====================================================================
+
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     
     # Plot 1: Vacuum Composition (Notice how clean it is now!)
