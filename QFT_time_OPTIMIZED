@@ -1,0 +1,188 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import itertools
+import matplotlib.animation as animation
+from scipy.sparse import lil_matrix, csr_matrix
+
+# --- 1. GLOBAL SETUPS ---
+possible_combinations = list(itertools.product([-1, 1], repeat=4))
+momenta = [-1, 0, 1]  # Mode index 0: k = -1 | Mode index 1: k = 0 | Mode index 2: k = +1
+mode_indices = [0, 1, 2] 
+
+valid_mode_combos = []
+for combo in itertools.product(mode_indices, repeat=4):
+    if sum(momenta[idx] for idx in combo) == 0:
+        valid_mode_combos.append(combo)
+
+# --- 2. CORE FUNCTIONS ---
+def spatial_integral(mode_combo, op_combo, momenta, L):
+    net_k = sum(-op * momenta[idx] for op, idx in zip(op_combo, mode_combo))
+    if abs(net_k) < 1e-12:
+        return L + 0.0j
+    else:
+        return (np.exp(1j * net_k * L) - 1.0) / (1j * net_k)
+
+def generate_fock_basis_recursive(E_max, mass, modes):
+    
+    omegas = [np.sqrt(k**2 + mass**2) for k in modes]
+    num_modes = len(modes)
+    basis = []
+    current_state = [0] * num_modes
+    
+    def dfs(mode_idx, current_energy):
+        if mode_idx == num_modes:
+            basis.append(tuple(current_state))
+            return
+        
+        omega = omegas[mode_idx]
+        max_particles = int((E_max - current_energy) / omega)
+        
+        for n in range(max_particles + 1):
+            current_state[mode_idx] = n
+            dfs(mode_idx + 1, current_energy + n * omega)
+
+    dfs(0, 0.0)
+    return basis, omegas
+
+def creation(coeff, state_tuple, mode_index):
+    n = state_tuple[mode_index]
+    new_coeff = coeff * np.sqrt(n + 1)
+    temp = list(state_tuple)
+    temp[mode_index] += 1
+    return new_coeff, tuple(temp)
+
+def annihilation(coeff, state_tuple, mode_index):
+    n = state_tuple[mode_index]
+    if n == 0: return 0.0, state_tuple
+    new_coeff = coeff * np.sqrt(n)
+    temp = list(state_tuple)
+    temp[mode_index] -= 1
+    return new_coeff, tuple(temp)
+
+# --- 3. MAIN SCRIPT ---
+def main():
+    E_max = 15.0
+    mass = 1.0
+    lambda_coupling = 10
+    L = 100
+    
+    coupling_factor = lambda_coupling / 24.0
+
+    print(f"Generating Basis for E_max = {E_max}...")
+    my_basis, omegas = generate_fock_basis_recursive(E_max, mass, momenta)
+    norm_factors = [1.0 / np.sqrt(2.0 * w * L) for w in omegas]
+    
+    N = len(my_basis) 
+    print(f"Matrix Dimension: {N} x {N}\n")
+
+    # The O(1) Hash Map for forward lookups
+    state_to_idx = {state: idx for idx, state in enumerate(my_basis)}
+
+    print("Building Sparse Hamiltonian Matrix...")
+    H = lil_matrix((N, N), dtype=complex)
+
+    for j, start_state in enumerate(my_basis):
+        # Diagonal elements
+        H[j, j] = sum(start_state[k] * omegas[k] for k in range(len(momenta)))
+
+        # Off-diagonal elements
+        for mode_combo in valid_mode_combos:
+            field_norm = np.prod([norm_factors[idx] for idx in mode_combo])
+            
+            for op_combo in possible_combinations:
+                I_spatial = spatial_integral(mode_combo, op_combo, momenta, L)
+                if np.abs(I_spatial) < 1e-8:
+                    continue
+
+                curr_state, curr_coeff = start_state, 1.0
+                
+                for op, idx in zip(reversed(op_combo), reversed(mode_combo)):
+                    if op == -1: curr_coeff, curr_state = annihilation(curr_coeff, curr_state, idx)
+                    else: curr_coeff, curr_state = creation(curr_coeff, curr_state, idx)
+                    if curr_coeff == 0.0: break
+                    
+                if curr_coeff != 0.0 and curr_state in state_to_idx:
+                    i = state_to_idx[curr_state]
+                    H[i, j] += coupling_factor * field_norm * np.real(I_spatial) * curr_coeff
+
+    # Diagonalization requires a dense matrix here because time evolution 
+    # projects across the entire spectrum, not just the ground state.
+    print("Diagonalizing Hamiltonian...")
+    eigenvalues, eigenvectors = np.linalg.eigh(H.toarray())
+
+    # --- 4. PRE-COMPUTED OPERATOR MATRICES (THE MASSIVE SPEEDUP) ---
+    print("Pre-computing base operator matrices...")
+    A_matrices = [lil_matrix((N, N)) for _ in momenta]
+    Adag_matrices = [lil_matrix((N, N)) for _ in momenta]
+    
+    for mode_idx in range(len(momenta)):
+        for j, start_state in enumerate(my_basis):
+            c_a, st_a = annihilation(1.0, start_state, mode_idx)
+            if c_a > 0.0 and st_a in state_to_idx:
+                A_matrices[mode_idx][state_to_idx[st_a], j] = c_a
+                
+            c_c, st_c = creation(1.0, start_state, mode_idx)
+            if c_c > 0.0 and st_c in state_to_idx:
+                Adag_matrices[mode_idx][state_to_idx[st_c], j] = c_c
+
+    # Convert to highly optimized CSR format
+    A_matrices = [m.tocsr() for m in A_matrices]
+    Adag_matrices = [m.tocsr() for m in Adag_matrices]
+
+    # --- 5. TIME EVOLUTION SETUP ---
+    idx_vac = state_to_idx[(0, 0, 0)]
+    idx_km1 = state_to_idx[(1, 0, 0)] 
+    idx_kp1 = state_to_idx[(0, 0, 1)] 
+
+    psi_0 = np.zeros(N, dtype=complex)
+    psi_0[idx_vac] = 1.0 / np.sqrt(3)
+    psi_0[idx_km1] = 1.0 / np.sqrt(3)
+    psi_0[idx_kp1] = 1.0 / np.sqrt(3)
+
+    c_n = eigenvectors.T.conj() @ psi_0
+
+    print("Building Field Matrices phi(x)...")
+    x_grid = np.linspace(0, L, 400)
+    phi_x_matrices = []
+    
+    for x in x_grid:
+        phi_mat = None
+        for mode_idx, k in enumerate(momenta):
+            norm = norm_factors[mode_idx]
+            phase_a = np.exp(1j * (2 * np.pi * k / L) * x)
+            phase_c = np.exp(-1j * (2 * np.pi * k / L) * x)
+            
+            # Fast sparse matrix addition instead of loops
+            term = norm * (phase_a * A_matrices[mode_idx] + phase_c * Adag_matrices[mode_idx])
+            phi_mat = term if phi_mat is None else phi_mat + term
+            
+        phi_x_matrices.append(phi_mat)
+
+    # --- 6. ANIMATION ---
+    print("Launching Animation...")
+    fig, ax = plt.subplots(figsize=(9, 5))
+    line, = ax.plot(x_grid, np.zeros_like(x_grid), color='crimson', linewidth=2.0, label="$\\langle \\psi(t) | \\phi(x) | \\psi(t) \\rangle$")
+    
+    ax.set_ylim(-0.5, 0.5) 
+    ax.set_title("Exact Quantum Field Wave Dynamics $\\langle \\phi(x, t) \\rangle$", fontsize=13)
+    ax.set_xlabel("Spatial Coordinate (x)", fontsize=11)
+    ax.set_ylabel("Field Expectation Value", fontsize=11)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper right")
+
+    def animate(frame):
+        t = frame * 0.05
+        phases = np.exp(-1j * eigenvalues * t)
+        psi_t = eigenvectors @ (c_n * phases)
+        
+        # Fast sparse matrix-vector multiplication
+        field_profile = [np.real(np.vdot(psi_t, phi_mat.dot(psi_t))) for phi_mat in phi_x_matrices]
+        line.set_ydata(field_profile)
+        return line,
+
+    ani = animation.FuncAnimation(fig, animate, frames=400, interval=30, blit=True)
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    main()
